@@ -49,13 +49,26 @@ DEFAULT_TTS_MODEL_CFG = [
     "hf://SWivid/F5-TTS/F5TTS_Base/vocab.txt",
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
+model_name = "best_0.pt"
+ckpt_path = "/home/carlos-germosen/Desktop/Lab/F5-TTS/ckpts/aiprodigy/" + model_name
 
 
 # load models
 
 vocoder = load_vocoder()
 
+import time
 
+def timing_decorator(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        print(f"Function {func.__name__} took {end_time - start_time:.4f} seconds")
+        return result
+    return wrapper
+
+@timing_decorator
 def load_f5tts(ckpt_path=str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.safetensors"))):
     F5TTS_model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
     return load_model(DiT, F5TTS_model_cfg, ckpt_path)
@@ -77,14 +90,14 @@ def load_custom(ckpt_path: str, vocab_path="", model_cfg=None):
     return load_model(DiT, model_cfg, ckpt_path, vocab_file=vocab_path)
 
 
-F5TTS_ema_model = load_f5tts()
+F5TTS_ema_model = load_f5tts(ckpt_path)
 E2TTS_ema_model = load_e2tts() if USING_SPACES else None
 custom_ema_model, pre_custom_path = None, ""
 
 chat_model_state = None
 chat_tokenizer_state = None
 
-
+@timing_decorator
 @gpu_decorator
 def generate_response(messages, model, tokenizer):
     """Generate response using Qwen"""
@@ -107,7 +120,7 @@ def generate_response(messages, model, tokenizer):
     ]
     return tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
-
+@timing_decorator
 @gpu_decorator
 def infer(
     ref_audio_orig,
@@ -595,7 +608,7 @@ Have a conversation with an AI using your reference voice!
                     )
                     system_prompt_chat = gr.Textbox(
                         label="System Prompt",
-                        value="You are not an AI assistant, you are whoever the user says you are. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                        value="You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
                         lines=2,
                     )
 
@@ -620,12 +633,13 @@ Have a conversation with an AI using your reference voice!
             value=[
                 {
                     "role": "system",
-                    "content": "You are not an AI assistant, you are whoever the user says you are. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
                 }
             ]
         )
 
         # Modify process_audio_input to use model and tokenizer from state
+        @timing_decorator
         @gpu_decorator
         def process_audio_input(audio_path, text, history, conv_state):
             """Handle audio or text input from user"""
@@ -635,6 +649,7 @@ Have a conversation with an AI using your reference voice!
 
             if audio_path:
                 text = preprocess_ref_audio_text(audio_path, text)[1]
+                print(f"\n\n\nText: {text}\n\n\n")
 
             if not text.strip():
                 return history, conv_state, ""
@@ -649,6 +664,7 @@ Have a conversation with an AI using your reference voice!
 
             return history, conv_state, ""
 
+        @timing_decorator
         @gpu_decorator
         def generate_audio_response(history, ref_audio, ref_text, remove_silence):
             """Generate TTS audio for AI response"""
@@ -676,7 +692,7 @@ Have a conversation with an AI using your reference voice!
             return [], [
                 {
                     "role": "system",
-                    "content": "You are not an AI assistant, you are whoever the user says you are. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
                 }
             ]
 
@@ -685,6 +701,9 @@ Have a conversation with an AI using your reference voice!
             new_conv_state = [{"role": "system", "content": new_prompt}]
             return [], new_conv_state
 
+        print("text_input_chat", text_input_chat)
+        print("ref_text_chat", ref_text_chat)
+
         # Handle audio input
         audio_input_chat.stop_recording(
             process_audio_input,
@@ -692,7 +711,7 @@ Have a conversation with an AI using your reference voice!
             outputs=[chatbot_interface, conversation_state],
         ).then(
             generate_audio_response,
-            inputs=[chatbot_interface, ref_audio_chat, ref_text_chat, remove_silence_chat],
+            inputs=[chatbot_interface, audio_input_chat, ref_text_chat, remove_silence_chat],
             outputs=[audio_output_chat, ref_text_chat],
         ).then(
             lambda: None,
