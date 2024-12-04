@@ -608,7 +608,7 @@ Have a conversation with an AI using your reference voice!
                     )
                     system_prompt_chat = gr.Textbox(
                         label="System Prompt",
-                        value="You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                        value="You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud. The English text below needs to be translated to Spanish. Here is the English text:",
                         lines=2,
                     )
 
@@ -633,7 +633,7 @@ Have a conversation with an AI using your reference voice!
             value=[
                 {
                     "role": "system",
-                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud. The English text below needs to be translated to Spanish. Here is the English text:",
                 }
             ]
         )
@@ -643,7 +643,8 @@ Have a conversation with an AI using your reference voice!
         @gpu_decorator
         def process_audio_input(audio_path, text, history, conv_state):
             """Handle audio or text input from user"""
-
+            print(f"\n\n\nAudio Path: {audio_path}\n\n\n")
+            print(f"\n\n\nText: {text}\n\n\n")
             if not audio_path and not text.strip():
                 return history, conv_state, ""
 
@@ -692,7 +693,7 @@ Have a conversation with an AI using your reference voice!
             return [], [
                 {
                     "role": "system",
-                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud.",
+                    "content": "You are not an AI assistant, you are an English to Spanish translator. You must give a response that is the correct and accurate translation of what was said to you. You must stay in character. Keep your responses concise since they will be spoken out loud. The English text below needs to be translated to Spanish. Here is the English text:",
                 }
             ]
 
@@ -737,7 +738,7 @@ Have a conversation with an AI using your reference voice!
         # Handle send button
         send_btn_chat.click(
             process_audio_input,
-            inputs=[audio_input_chat, text_input_chat, chatbot_interface, conversation_state],
+            inputs=[ref_audio_chat, text_input_chat, chatbot_interface, conversation_state],
             outputs=[chatbot_interface, conversation_state, ref_text_chat],
         ).then(
             generate_audio_response,
