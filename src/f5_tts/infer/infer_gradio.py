@@ -44,7 +44,7 @@ DEFAULT_TTS_MODEL = "F5-TTS"
 tts_model_choice = DEFAULT_TTS_MODEL
 
 model_name = "best_0.pt"
-ckpt_path = "/home/carlos-germosen/Desktop/Lab/F5-TTS/ckpts/aiprodigy/" + model_name
+ckpt_path = "ckpts/aiprodigy/" + model_name
 
 
 # load models
@@ -652,11 +652,11 @@ Have a conversation with an AI using your reference voice!
         def generate_audio_response(history, ref_audio, ref_text, remove_silence):
             """Generate TTS audio for AI response"""
             if not history or not ref_audio:
-                return None
+                return None, ref_text
 
             last_user_message, last_ai_response = history[-1]
             if not last_ai_response:
-                return None
+                return None, ref_text
 
             audio_result, _, ref_text_out = infer(
                 ref_audio,
@@ -696,11 +696,11 @@ Have a conversation with an AI using your reference voice!
             generate_audio_response,
             inputs=[chatbot_interface, audio_input_chat, ref_text_chat, remove_silence_chat],
             outputs=[audio_output_chat, ref_text_chat],
-        ).then(
-            lambda: None,
-            None,
-            audio_input_chat,
-        )
+        )# ).then(
+        #     lambda: None,
+        #     None,
+        #     audio_input_chat,
+        # )
 
         # Handle text input
         text_input_chat.submit(
