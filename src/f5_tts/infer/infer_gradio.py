@@ -662,7 +662,7 @@ Have a conversation with an AI using your reference voice!
             conv_state.append({"role": "assistant", "content": response})
             history[-1] = (text, response)
 
-            return history, conv_state, ""
+            return history, conv_state, text
 
         @timing_decorator
         @gpu_decorator
@@ -708,7 +708,7 @@ Have a conversation with an AI using your reference voice!
         audio_input_chat.stop_recording(
             process_audio_input,
             inputs=[audio_input_chat, text_input_chat, chatbot_interface, conversation_state],
-            outputs=[chatbot_interface, conversation_state],
+            outputs=[chatbot_interface, conversation_state, ref_text_chat],
         ).then(
             generate_audio_response,
             inputs=[chatbot_interface, audio_input_chat, ref_text_chat, remove_silence_chat],
@@ -723,7 +723,7 @@ Have a conversation with an AI using your reference voice!
         text_input_chat.submit(
             process_audio_input,
             inputs=[audio_input_chat, text_input_chat, chatbot_interface, conversation_state],
-            outputs=[chatbot_interface, conversation_state],
+            outputs=[chatbot_interface, conversation_state, ref_text_chat],
         ).then(
             generate_audio_response,
             inputs=[chatbot_interface, ref_audio_chat, ref_text_chat, remove_silence_chat],
@@ -738,7 +738,7 @@ Have a conversation with an AI using your reference voice!
         send_btn_chat.click(
             process_audio_input,
             inputs=[audio_input_chat, text_input_chat, chatbot_interface, conversation_state],
-            outputs=[chatbot_interface, conversation_state],
+            outputs=[chatbot_interface, conversation_state, ref_text_chat],
         ).then(
             generate_audio_response,
             inputs=[chatbot_interface, ref_audio_chat, ref_text_chat, remove_silence_chat],
