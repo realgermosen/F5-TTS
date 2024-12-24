@@ -680,7 +680,15 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
 
     alpha = 0.5
     _max = 1.0
-    slicer = Slicer(24000)
+    slicer = Slicer(
+    sr=24000,
+    threshold=-40.0,
+    min_length=5000,   # Minimum length of 5 seconds
+    min_interval=300,  # Allow 0.3-second pauses to trigger cuts
+    hop_size=20,       # Default hop size
+    max_sil_kept=2000, # Retain up to 2 seconds of silence
+)
+
 
     num = 0
     error_num = 0
