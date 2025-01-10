@@ -49,8 +49,8 @@ DEFAULT_TTS_MODEL_CFG = [
     "hf://SWivid/F5-TTS/F5TTS_Base/vocab.txt",
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
-model_name = "best_0.pt"
-ckpt_path = "ckpts/aiprodigy/" + model_name
+model_name = "model_last.pt"
+ckpt_path = "F5-TTS/ckpts/penta_common_voice/" + model_name
 
 
 # load models
@@ -91,6 +91,7 @@ def load_custom(ckpt_path: str, vocab_path="", model_cfg=None):
 
 
 F5TTS_ema_model = load_f5tts(ckpt_path)
+# F5TTS_ema_model = load_f5tts()
 E2TTS_ema_model = load_e2tts() if USING_SPACES else None
 custom_ema_model, pre_custom_path = None, ""
 
