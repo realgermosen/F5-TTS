@@ -280,8 +280,8 @@ def remove_silence_edges(audio, silence_threshold=-42):
 # preprocess reference audio and text
 
 
-def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_info=print, device=device):
-    show_info("Converting audio...")
+def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_info=print, device=device, language=None):
+    # show_info("Converting audio...")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
         aseg = AudioSegment.from_file(ref_audio_orig)
 
@@ -332,8 +332,8 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
             show_info("Using cached reference text...")
             ref_text = _ref_audio_cache[audio_hash]
         else:
-            show_info("No reference text provided, transcribing reference audio...")
-            ref_text = transcribe(ref_audio)
+            # show_info("No reference text provided, transcribing reference audio...")
+            ref_text = transcribe(ref_audio, language=language)
             # Cache the transcribed text (not caching custom ref_text, enabling users to do manual tweak)
             _ref_audio_cache[audio_hash] = ref_text
     else:
@@ -346,7 +346,7 @@ def preprocess_ref_audio_text(ref_audio_orig, ref_text, clip_short=True, show_in
         else:
             ref_text += ". "
 
-    print("\nref_text  ", ref_text)
+    # print("\nref_text  ", ref_text)
 
     return ref_audio, ref_text
 

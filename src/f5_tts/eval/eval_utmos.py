@@ -33,7 +33,8 @@ def main():
     avg_score = utmos_score / len(audio_paths) if len(audio_paths) > 0 else 0
     print(f"UTMOS: {avg_score}")
 
-    utmos_result_path = Path(args.audio_dir) / "utmos_results.json"
+    # utmos_result_path = Path(args.audio_dir) / "utmos_results.json"
+    utmos_result_path = Path(args.audio_dir).parent / "utmos_results.json"
     with open(utmos_result_path, "w", encoding="utf-8") as f:
         json.dump(utmos_results, f, ensure_ascii=False, indent=4)
 
