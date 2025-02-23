@@ -30,9 +30,9 @@ os.makedirs(processed_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
 
 # Audio settings
-min_length = 3  # Minimum chunk length in seconds
-max_length = 10  # Maximum chunk length in seconds
-silence_duration = 1  # Silence threshold for pause detection in seconds
+min_length = 5  # Minimum chunk length in seconds
+max_length = 8  # Maximum chunk length in seconds
+silence_duration = 0.5  # Silence threshold for pause detection in seconds
 rms_threshold_db = -40.0  # Silence threshold in decibels
 min_frames = int(48000 * min_length)
 max_frames = int(48000 * max_length)
@@ -47,9 +47,9 @@ translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=True
 # F5-TTS
 tts_model_choice = "F5-TTS"
 # project = "pentazero"
-project = "f5-tts_spanish"
+project = "pentazero_v1" # "f5-tts_spanish"
 ckpt_path = f"F5-TTS/ckpts/{project}/model_last.pt"
-remove_silence = True
+remove_silence = False
 cross_fade_duration = 0.50 #0.15
 speed = 1.0
 vocoder = load_vocoder()

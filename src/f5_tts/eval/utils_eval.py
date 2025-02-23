@@ -295,8 +295,22 @@ def load_asr_model(lang, ckpt_dir=""):
         from faster_whisper import WhisperModel
 
         model_size = "large-v3" if ckpt_dir == "" else ckpt_dir
+        # Added override: if a ckpt_dir is provided, use the valid repo id
+        if ckpt_dir != "":
+            model_size = "openai/whisper-large-v3"
+        model = WhisperModel(model_size, device="cuda", compute_type="float16")
+    # Added support for Spanish ("es") using the same procedure as for English.
+    elif lang == "es":
+        from faster_whisper import WhisperModel
+
+        model_size = "large-v3" if ckpt_dir == "" else ckpt_dir
+        # Added override: if a ckpt_dir is provided, use the valid repo id
+        if ckpt_dir != "":
+            model_size = "openai/whisper-large-v3"
         model = WhisperModel(model_size, device="cuda", compute_type="float16")
     return model
+
+
 
 
 # WER Evaluation, the way Seed-TTS does
@@ -307,10 +321,15 @@ def run_asr_wer(args):
 
     if lang == "zh":
         import zhconv
-
         torch.cuda.set_device(rank)
     elif lang == "en":
         os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
+        import torch
+        torch.cuda.set_device(0)  # <-- Added to ensure CUDA device is set for English
+    elif lang == "es":
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(rank)
+        import torch
+        torch.cuda.set_device(0)  # <-- Added to ensure CUDA device is set for Spanish
     else:
         raise NotImplementedError(
             "lang support only 'zh' (funasr paraformer-zh), 'en' (faster-whisper-large-v3), for now."
@@ -319,7 +338,7 @@ def run_asr_wer(args):
     asr_model = load_asr_model(lang, ckpt_dir=ckpt_dir)
 
     from zhon.hanzi import punctuation
-
+    import string  # Added import for string
     punctuation_all = punctuation + string.punctuation
     wer_results = []
 
@@ -332,6 +351,11 @@ def run_asr_wer(args):
             hypo = zhconv.convert(hypo, "zh-cn")
         elif lang == "en":
             segments, _ = asr_model.transcribe(gen_wav, beam_size=5, language="en")
+            hypo = ""
+            for segment in segments:
+                hypo = hypo + " " + segment.text
+        elif lang == "es":
+            segments, _ = asr_model.transcribe(gen_wav, beam_size=5, language="es")
             hypo = ""
             for segment in segments:
                 hypo = hypo + " " + segment.text
@@ -350,6 +374,9 @@ def run_asr_wer(args):
             truth = " ".join([x for x in truth])
             hypo = " ".join([x for x in hypo])
         elif lang == "en":
+            truth = truth.lower()
+            hypo = hypo.lower()
+        elif lang == "es":
             truth = truth.lower()
             hypo = hypo.lower()
 
@@ -371,6 +398,7 @@ def run_asr_wer(args):
         )
 
     return wer_results
+
 
 
 # SIM Evaluation

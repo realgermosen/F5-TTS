@@ -150,6 +150,57 @@ class Trainer:
             else:
                 self.accelerator.save(checkpoint, f"{self.checkpoint_path}/model_{step}.pt")
 
+    # def load_checkpoint(self):
+    #     if (
+    #         not exists(self.checkpoint_path)
+    #         or not os.path.exists(self.checkpoint_path)
+    #         or not any(filename.endswith(".pt") for filename in os.listdir(self.checkpoint_path))
+    #     ):
+    #         return 0
+
+    #     self.accelerator.wait_for_everyone()
+    #     if "model_last.pt" in os.listdir(self.checkpoint_path):
+    #         latest_checkpoint = "model_last.pt"
+    #     else:
+    #         latest_checkpoint = sorted(
+    #             [f for f in os.listdir(self.checkpoint_path) if f.endswith(".pt")],
+    #             key=lambda x: int("".join(filter(str.isdigit, x))),
+    #         )[-1]
+    #     # checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", map_location=self.accelerator.device)  # rather use accelerator.load_state ಥ_ಥ
+    #     checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu")
+
+    #     # patch for backward compatibility, 305e3ea
+    #     for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
+    #         if key in checkpoint["ema_model_state_dict"]:
+    #             del checkpoint["ema_model_state_dict"][key]
+
+    #     if self.is_main:
+    #         self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+
+    #     if "step" in checkpoint:
+    #         # patch for backward compatibility, 305e3ea
+    #         for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
+    #             if key in checkpoint["model_state_dict"]:
+    #                 del checkpoint["model_state_dict"][key]
+
+    #         self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+    #         self.accelerator.unwrap_model(self.optimizer).load_state_dict(checkpoint["optimizer_state_dict"])
+    #         if self.scheduler:
+    #             self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    #         step = checkpoint["step"]
+    #     else:
+    #         checkpoint["model_state_dict"] = {
+    #             k.replace("ema_model.", ""): v
+    #             for k, v in checkpoint["ema_model_state_dict"].items()
+    #             if k not in ["initted", "step"]
+    #         }
+    #         self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+    #         step = 0
+
+    #     del checkpoint
+    #     gc.collect()
+    #     return step
+
     def load_checkpoint(self):
         if (
             not exists(self.checkpoint_path)
@@ -159,47 +210,39 @@ class Trainer:
             return 0
 
         self.accelerator.wait_for_everyone()
-        if "model_last.pt" in os.listdir(self.checkpoint_path):
+        # Get a list of checkpoint files
+        checkpoint_files = [f for f in os.listdir(self.checkpoint_path) if f.endswith(".pt")]
+        if "model_last.pt" in checkpoint_files:
             latest_checkpoint = "model_last.pt"
         else:
             latest_checkpoint = sorted(
-                [f for f in os.listdir(self.checkpoint_path) if f.endswith(".pt")],
-                key=lambda x: int("".join(filter(str.isdigit, x))),
+                checkpoint_files, key=lambda x: int("".join(filter(str.isdigit, x)))
             )[-1]
-        # checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", map_location=self.accelerator.device)  # rather use accelerator.load_state ಥ_ಥ
-        checkpoint = torch.load(f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu")
 
-        # patch for backward compatibility, 305e3ea
+        # Load the checkpoint
+        checkpoint_path_full = os.path.join(self.checkpoint_path, latest_checkpoint)
+        checkpoint = torch.load(checkpoint_path_full, weights_only=True, map_location="cpu")
+
+        # Patch for backward compatibility, if necessary
         for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_spec.mel_stft.spectrogram.window"]:
-            if key in checkpoint["ema_model_state_dict"]:
+            if key in checkpoint.get("ema_model_state_dict", {}):
                 del checkpoint["ema_model_state_dict"][key]
 
-        if self.is_main:
+        if self.is_main and "ema_model_state_dict" in checkpoint:
             self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
 
-        if "step" in checkpoint:
-            # patch for backward compatibility, 305e3ea
-            for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
-                if key in checkpoint["model_state_dict"]:
-                    del checkpoint["model_state_dict"][key]
+        for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
+            if key in checkpoint["model_state_dict"]:
+                del checkpoint["model_state_dict"][key]
 
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
-            self.accelerator.unwrap_model(self.optimizer).load_state_dict(checkpoint["optimizer_state_dict"])
-            if self.scheduler:
-                self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-            step = checkpoint["step"]
-        else:
-            checkpoint["model_state_dict"] = {
-                k.replace("ema_model.", ""): v
-                for k, v in checkpoint["ema_model_state_dict"].items()
-                if k not in ["initted", "step"]
-            }
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
-            step = 0
+        # **Only load the model weights**; do not load optimizer or scheduler states.
+        self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
 
         del checkpoint
         gc.collect()
-        return step
+        # Reset step count to start finetuning fresh.
+        return 0
+
 
     def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int = None):
         if self.log_samples:

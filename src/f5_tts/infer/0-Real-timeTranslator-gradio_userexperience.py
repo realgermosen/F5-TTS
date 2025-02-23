@@ -68,8 +68,8 @@ translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=True
 
 # F5-TTS
 tts_model_choice = "F5-TTS"
-project = "pentazero_carlos" ## "f5-tts_spanish"  # or whichever project folder name you use
-ckpt_path = f"F5-TTS/ckpts/{project}/model_8200000.pt"
+project = "pentazero_v0" ## "f5-tts_spanish"  # or whichever project folder name you use
+ckpt_path = f"F5-TTS/ckpts/{project}/model_last.pt"
 remove_silence_flag = True
 speed = 1.0
 vocoder = load_vocoder()

@@ -49,8 +49,8 @@ DEFAULT_TTS_MODEL_CFG = [
     "hf://SWivid/F5-TTS/F5TTS_Base/vocab.txt",
     json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)),
 ]
-model_name = "model_7640000.pt"
-ckpt_path = "ckpts/pentazero_carlos/" + model_name
+model_name = "model_last.pt"
+ckpt_path = "ckpts/f5-tts_spanish/" + model_name
 
 
 # load models

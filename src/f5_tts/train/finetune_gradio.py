@@ -681,12 +681,21 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
     alpha = 0.5
     _max = 1.0
     slicer = Slicer(
-    sr=24000,
-    threshold=-40.0,
-    min_length=3000,   # Minimum length of 3 seconds
-    min_interval=300,  # Allow 0.3-second pauses to trigger cuts
-    hop_size=20,       # Default hop size
-    max_sil_kept=2000, # Retain up to 2 seconds of silence
+    sr=48000,         # Updated to match your audio files' sampling rate
+    threshold=-40.0,  # Silence detection threshold in dB
+    min_length=6000,  # Adjusted for 3 seconds (since 48 kHz has twice the samples of 24 kHz)
+    min_interval=600, # 0.3-second pauses at 48 kHz
+    hop_size=20,      # Default hop size (remains unchanged)
+    max_sil_kept=4000 # Adjusted for a maximum of 2 seconds of retained silence
+
+    # Previously at 24 kHz
+    # slicer = Slicer(
+    # sr=24000,
+    # threshold=-40.0,
+    # min_length=3000,   # Minimum length of 3 seconds
+    # min_interval=300,  # Allow 0.3-second pauses to trigger cuts
+    # hop_size=20,       # Default hop size
+    # max_sil_kept=2000, # Retain up to 2 seconds of silence
 )
 
 
@@ -694,7 +703,7 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
     error_num = 0
     data = ""
     for file_audio in progress.tqdm(file_audios, desc="transcribe files", total=len((file_audios))):
-        audio, _ = librosa.load(file_audio, sr=24000, mono=True)
+        audio, _ = librosa.load(file_audio, sr=48000, mono=True) # previously -> sr=24000
 
         list_slicer = slicer.slice(audio)
         for chunk, start, end in progress.tqdm(list_slicer, total=len(list_slicer), desc="slicer files"):
@@ -705,7 +714,7 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
             if tmp_max > 1:
                 chunk /= tmp_max
             chunk = (chunk / tmp_max * (_max * alpha)) + (1 - alpha) * chunk
-            wavfile.write(file_segment, 24000, (chunk * 32767).astype(np.int16))
+            wavfile.write(file_segment, 48000, (chunk * 32767).astype(np.int16)) # previously -> 24000
 
             try:
                 text = transcribe(file_segment, language)
@@ -808,14 +817,14 @@ def create_metadata(name_project, ch_tokenizer, progress=gr.Progress()):
             print(f"Error processing {file_audio}: {e}")
             continue
 
-        if duration < 1 or duration > 25:
-            if duration > 25:
-                error_files.append([file_audio, "duration > 25 sec"])
-            if duration < 1:
-                error_files.append([file_audio, "duration < 1 sec "])
+        if duration < 2 or duration > 20:
+            if duration > 20:
+                error_files.append([file_audio, "duration > 20 sec"])
+            if duration < 2:
+                error_files.append([file_audio, "duration < 2 sec "])
             continue
-        if len(text) < 3:
-            error_files.append([file_audio, "very small text len 3"])
+        if len(text) < 8:
+            error_files.append([file_audio, "very small text len 8"])
             continue
 
         text = clear_text(text)
@@ -958,7 +967,7 @@ def calculate_train(
 
     total_hours = hours
     mel_hop_length = 256
-    mel_sampling_rate = 24000
+    mel_sampling_rate = 48000 # previously 24000
 
     # target
     wanted_max_updates = 1000000

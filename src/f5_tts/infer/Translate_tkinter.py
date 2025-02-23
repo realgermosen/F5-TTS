@@ -31,8 +31,8 @@ os.makedirs(generated_dir, exist_ok=True)
 
 # Audio settings
 min_length = 3  # Minimum chunk length in seconds
-max_length = 10  # Maximum chunk length in seconds
-silence_duration = 1  # Silence threshold for pause detection in seconds
+max_length = 5 # Maximum chunk length in seconds
+silence_duration = 0.1  # Silence threshold for pause detection in seconds
 rms_threshold_db = -40.0  # Silence threshold in decibels
 min_frames = int(48000 * min_length)
 max_frames = int(48000 * max_length)
@@ -46,10 +46,11 @@ translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=True
 
 # F5-TTS
 tts_model_choice = "F5-TTS"
-project = "pentazero_v0"
+# project = "entazero_v2"
+project = "f5-tts_spanish"  # "f5-tts_spanish"
 ckpt_path = f"F5-TTS/ckpts/{project}/model_last.pt"
-remove_silence = True
-cross_fade_duration = 0.15
+remove_silence = False
+cross_fade_duration = 0.50  #0.15
 speed = 1.0
 vocoder = load_vocoder()
 vocab_file = os.path.join("F5-TTS/data", f"{project}_char/vocab.txt")
@@ -65,18 +66,138 @@ tts_api = F5TTS(
 # Global Variables
 ############################################
 
-
 autoplay_enabled = False
 current_chunk = []
 is_recording = False
 stream = None
 silence_frames = 0
 waiting_for_pause = False
+crossfade_duration = 0.15
 
 # Queue for audio playback
 playback_queue = queue.Queue()
 
 stop_event = threading.Event()
+
+# Global crossfaded audio
+final_wave_data = None
+final_sample_rate = 48000  # default, or adjusted as needed
+
+############################################
+# Utility / Helper Functions
+############################################
+
+def transcribe_audio(filepath: str, language: str = "En") -> str:
+    """
+    Transcribes the audio file at `filepath` to text using preprocess_ref_audio_text.
+    Returns the transcribed text.
+    """
+    _, ref_text = preprocess_ref_audio_text(filepath, "", language=language)
+    return ref_text
+
+def translate_english_to_spanish(english_text: str) -> str:
+    """
+    Translates the given English text into Spanish using the NLLB model.
+    """
+    inputs = tokenizer(english_text, return_tensors="pt")
+    forced_bos_token_id = (
+        tokenizer.lang_code_to_id["spa_Latn"]
+        if hasattr(tokenizer, "lang_code_to_id")
+        else tokenizer.convert_tokens_to_ids("spa_Latn")
+    )
+    translated_tokens = translation_model.generate(
+        **inputs,
+        forced_bos_token_id=forced_bos_token_id,
+        max_length=100
+    )
+    return tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
+
+def clip_audio(input_filepath: str, max_duration_sec: int = 6, output_filepath: str = None) -> str:
+    """
+    Clips the audio file at `input_filepath` to a maximum duration of `max_duration_sec` seconds.
+    If `output_filepath` is not provided, the clipped audio is saved in the output_dir with a
+    modified filename.
+    Returns the path to the clipped audio file.
+    """
+    data, sr = sf.read(input_filepath)
+    if data.ndim > 1:
+        data = data[:, 0]  # use the first channel
+    max_samples = int(max_duration_sec * sr)
+    if len(data) > max_samples:
+        clipped_data = data[:max_samples]
+    else:
+        clipped_data = data
+    if output_filepath is None:
+        base = os.path.basename(input_filepath)
+        output_filepath = os.path.join(output_dir, f"clipped_{base}")
+    sf.write(output_filepath, clipped_data, sr)
+    return output_filepath
+
+def run_tts_inference(
+    tts_api: F5TTS,
+    ref_audio: str,
+    ref_text: str,
+    gen_text: str,
+    remove_silence_flag: bool = True,
+    speed_val: float = 1.0
+) -> tuple[int, np.ndarray]:
+    """
+    Runs inference on the TTS model, returning (sample_rate, wave_data).
+    """
+    seed = -1  # -1 for random
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+        final_wave, final_sample_rate, _ = tts_api.infer(
+            gen_text=gen_text.lower().strip(),
+            ref_text=ref_text.lower().strip(),
+            ref_file=ref_audio,
+            file_wave=f.name,
+            speed=speed_val,
+            seed=seed,
+            remove_silence=remove_silence_flag,
+        )
+        sf.write(f.name, final_wave, final_sample_rate)
+        if remove_silence_flag:
+            remove_silence_for_generated_wav(f.name)
+            final_wave, _ = sf.read(f.name)
+            final_wave = final_wave.astype("float32")
+    return final_sample_rate, final_wave
+
+def crossfade_two_chunks(chunk1: np.ndarray, chunk2: np.ndarray, sr: int, duration: float = 0.15) -> np.ndarray:
+    """
+    Crossfades two audio chunks and returns a single chunk.
+    """
+    fade_samples = int(duration * sr)
+    if len(chunk1) < fade_samples or len(chunk2) < fade_samples:
+        return np.concatenate((chunk1, chunk2))
+
+    fade_out = np.linspace(1, 0, fade_samples, dtype=np.float32)
+    chunk1[-fade_samples:] *= fade_out
+
+    fade_in = np.linspace(0, 1, fade_samples, dtype=np.float32)
+    chunk2[:fade_samples] *= fade_in
+
+    return np.concatenate((chunk1, chunk2[fade_samples:]))
+
+def update_final_wave(new_chunk: np.ndarray, sr: int, crossfade_sec: float = 0.15) -> None:
+    """
+    Crossfades new_chunk into the global final_wave_data.
+    """
+    global final_wave_data, final_sample_rate
+    if final_wave_data is None:
+        final_wave_data = new_chunk
+        final_sample_rate = sr
+    else:
+        final_wave_data = crossfade_two_chunks(final_wave_data, new_chunk, sr, duration=crossfade_sec)
+    final_sample_rate = sr
+
+def save_crossfaded_output() -> None:
+    """
+    Saves the global crossfaded output to disk.
+    """
+    if final_wave_data is not None:
+        output_wav_path = os.path.join(generated_dir, "crossfaded_full_output.wav")
+        sf.write(output_wav_path, final_wave_data, final_sample_rate)
+        print(f"Crossfaded output saved to: {output_wav_path}")
 
 ############################################
 # Classes
@@ -87,14 +208,12 @@ def get_rms(
     frame_length=2048,
     hop_length=512,
     pad_mode="constant",
-):  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.py
+):
     padding = (int(frame_length // 2), int(frame_length // 2))
     y = np.pad(y, padding, mode=pad_mode)
 
     axis = -1
-    # put our new within-frame axis at the end for now
     out_strides = y.strides + tuple([y.strides[axis]])
-    # Reduce the shape on the framing axis
     x_shape_trimmed = list(y.shape)
     x_shape_trimmed[axis] -= frame_length - 1
     out_shape = tuple(x_shape_trimmed) + tuple([frame_length])
@@ -104,18 +223,13 @@ def get_rms(
     else:
         target_axis = axis + 1
     xw = np.moveaxis(xw, -1, target_axis)
-    # Downsample along the target axis
     slices = [slice(None)] * xw.ndim
     slices[axis] = slice(0, None, hop_length)
     x = xw[tuple(slices)]
-
-    # Calculate power
     power = np.mean(np.abs(x) ** 2, axis=-2, keepdims=True)
-
     return np.sqrt(power)
 
-
-class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.py
+class Slicer:
     def __init__(
         self,
         sr: int,
@@ -143,7 +257,6 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
         else:
             return waveform[begin * self.hop_size : min(waveform.shape[0], end * self.hop_size)]
 
-    # @timeit
     def slice(self, waveform):
         if len(waveform.shape) > 1:
             samples = waveform.mean(axis=0)
@@ -156,22 +269,17 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
         silence_start = None
         clip_start = 0
         for i, rms in enumerate(rms_list):
-            # Keep looping while frame is silent.
             if rms < self.threshold:
-                # Record start of silent frames.
                 if silence_start is None:
                     silence_start = i
                 continue
-            # Keep looping while frame is not silent and silence start has not been recorded.
             if silence_start is None:
                 continue
-            # Clear recorded silence start if interval is not enough or clip is too short
             is_leading_silence = silence_start == 0 and i > self.max_sil_kept
             need_slice_middle = i - silence_start >= self.min_interval and i - clip_start >= self.min_length
             if not is_leading_silence and not need_slice_middle:
                 silence_start = None
                 continue
-            # Need slicing. Record the range of silent frames to be removed.
             if i - silence_start <= self.max_sil_kept:
                 pos = rms_list[silence_start : i + 1].argmin() + silence_start
                 if silence_start == 0:
@@ -199,14 +307,11 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
                     sil_tags.append((pos_l, pos_r))
                 clip_start = pos_r
             silence_start = None
-        # Deal with trailing silence.
         total_frames = rms_list.shape[0]
         if silence_start is not None and total_frames - silence_start >= self.min_interval:
             silence_end = min(total_frames, silence_start + self.max_sil_kept)
             pos = rms_list[silence_start : silence_end + 1].argmin() + silence_start
             sil_tags.append((pos, total_frames + 1))
-        # Apply and return slices.
-        ####音频+起始时间+终止时间
         if len(sil_tags) == 0:
             return [[waveform, 0, int(total_frames * self.hop_size)]]
         else:
@@ -230,66 +335,36 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
                     ]
                 )
             return chunks
-        
-import numpy as np
+
+############################################
+# Crossfade Chunks (Unchanged from original, except name)
+############################################
 
 def crossfade_chunks(chunk1, chunk2, sr, crossfade_duration=0.15):
     """
     Apply a crossfade between two audio chunks.
-
-    Args:
-        chunk1 (numpy.ndarray): The first audio chunk.
-        chunk2 (numpy.ndarray): The second audio chunk.
-        sr (int): Sampling rate.
-        crossfade_duration (float): Duration of crossfade in seconds.
-
-    Returns:
-        numpy.ndarray: A single chunk with a smooth crossfade transition.
     """
     fade_samples = int(crossfade_duration * sr)
-
-    # Ensure both chunks are long enough for crossfading
     if len(chunk1) < fade_samples or len(chunk2) < fade_samples:
         return np.concatenate((chunk1, chunk2))
-
-    # Create fade-out for chunk1
     fade_out = np.linspace(1, 0, fade_samples)
     chunk1[-fade_samples:] *= fade_out
-
-    # Create fade-in for chunk2
     fade_in = np.linspace(0, 1, fade_samples)
     chunk2[:fade_samples] *= fade_in
-
-    # Combine chunks with crossfade
     return np.concatenate((chunk1, chunk2[fade_samples:]))
 
 def trim_silence(audio, sr, threshold=-40.0, min_silence_duration=0.1):
     """
     Trim silence from the beginning and end of an audio chunk.
-
-    Args:
-        audio (numpy.ndarray): Audio data.
-        sr (int): Sampling rate.
-        threshold (float): Silence threshold in dB.
-        min_silence_duration (float): Minimum silence duration to trim.
-
-    Returns:
-        numpy.ndarray: Trimmed audio.
     """
     silence_threshold = 10 ** (threshold / 20.0)
     min_silence_samples = int(min_silence_duration * sr)
-
-    # Find non-silent regions
     non_silent = np.where(np.abs(audio) > silence_threshold)[0]
     if len(non_silent) < 1:
-        return audio  # Return the original if no non-silent parts found
-
-    # Determine start and end indices of the non-silent region
+        return audio
     start_idx = max(0, non_silent[0] - min_silence_samples)
     end_idx = min(len(audio), non_silent[-1] + min_silence_samples)
-
     return audio[start_idx:end_idx]
-
 
 ############################################
 # Audio Playback Worker
@@ -309,7 +384,7 @@ def playback_worker():
             sd.wait()  # Wait for the playback to finish
         except Exception as e:
             print(f"Error playing audio: {e}")
-        playback_queue.task_done()  # Mark task as done
+        playback_queue.task_done()
 
 # Start the playback worker in a separate thread
 playback_thread = threading.Thread(target=playback_worker, daemon=True)
@@ -347,7 +422,7 @@ def stop_recording():
     except Exception as e:
         messagebox.showerror("Error", f"Failed to stop recording: {e}")
 
-def audio_callback(indata, frames, time, status):
+def audio_callback(indata, frames, time_info, status):
     global current_chunk, silence_frames, waiting_for_pause
     if status:
         print(status)
@@ -388,52 +463,74 @@ def save_and_process_chunk():
         threading.Thread(target=process_file, args=(output_file,)).start()
     current_chunk = []
 
-def translate_text(english_text):
-    inputs = tokenizer(english_text, return_tensors="pt")
-    forced_bos_token_id = tokenizer.lang_code_to_id["spa_Latn"] if hasattr(tokenizer, "lang_code_to_id") else tokenizer.convert_tokens_to_ids("spa_Latn")
-    translated_tokens = translation_model.generate(
-        **inputs, forced_bos_token_id=forced_bos_token_id, max_length=100
-    )
-    return tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
-
-def run_infer(tts_api, ref_audio, ref_text, gen_text):
-    seed = -1
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
-        final_wave, final_sample_rate, _ = tts_api.infer(
-            gen_text=gen_text.lower().strip(),
-            ref_text=ref_text.lower().strip(),
-            ref_file=ref_audio,
-            file_wave=f.name,
-            speed=speed,
-            seed=seed,
-            remove_silence=remove_silence,
-        )
-        sf.write(f.name, final_wave, final_sample_rate)
-        if remove_silence:
-            remove_silence_for_generated_wav(f.name)
-            final_wave, _ = sf.read(f.name)
-            final_wave = final_wave.astype("float32")
-    return final_sample_rate, final_wave
+############################################
+# Updated process_file Function
+############################################
 
 def process_file(filepath):
+    """
+    Transcribe, translate, TTS, crossfade with the global wave, 
+    queue playback if enabled, then move original chunk.
+    """
     global autoplay_enabled
     try:
-        ref_text = preprocess_ref_audio_text(filepath, "", language="En")[1]
-        translated_text = translate_text(ref_text)
-        print(f"Transcribed: {ref_text}")
+        # 1) Transcribe the full audio (complete content)
+        full_ref_text = transcribe_audio(filepath, language="En")
+        print(f"Full Transcribed: {full_ref_text}")
+
+        # 2) Clip the audio to a maximum of 6 seconds for TTS reference
+        clipped_filepath = clip_audio(filepath, max_duration_sec=15)
+        print(f"Clipped audio saved to: {clipped_filepath}")
+
+        # 3) Transcribe the clipped audio to get reference text aligned with the clipped audio
+        clipped_ref_text = transcribe_audio(clipped_filepath, language="En")
+        print(f"Clipped Transcribed: {clipped_ref_text}")
+
+        # 4) Translate the full transcription
+        translated_text = translate_english_to_spanish(full_ref_text)
         print(f"Translated: {translated_text}")
-        sample_rate, wave_data = run_infer(tts_api, filepath, ref_text, translated_text)
+
+        # 5) Run TTS inference using the clipped audio and its transcription as reference
+        sample_rate, wave_data = run_tts_inference(
+            tts_api,
+            ref_audio=clipped_filepath,
+            ref_text=clipped_ref_text,
+            gen_text=translated_text,
+            remove_silence_flag=remove_silence,
+            speed_val=speed
+        )
+
+        wave_data = wave_data.astype(np.float32)
+
+        # 6) Crossfade into global wave
+        update_final_wave(wave_data, sample_rate, crossfade_duration)
+
+        # 7) Save new chunk for playback or future reference
         output_wav_path = os.path.join(generated_dir, f"generated_{os.path.basename(filepath)}")
         sf.write(output_wav_path, wave_data, sample_rate)
         print(f"Generated audio saved to: {output_wav_path}")
 
+        # 8) If autoplay is enabled, queue it
         if autoplay_enabled:
-            playback_queue.put(output_wav_path)  # Add file to playback queue
+            playback_queue.put(output_wav_path)
 
+        # 9) Move processed chunk
         processed_path = os.path.join(processed_dir, os.path.basename(filepath))
         os.rename(filepath, processed_path)
+
+        # 10) Optionally remove the temporary clipped file
+        if os.path.exists(clipped_filepath):
+            os.remove(clipped_filepath)
+
+        # 11) Optionally save the crossfaded master wave so far
+        save_crossfaded_output()
+
     except Exception as e:
         print(f"Error processing file {filepath}: {e}")
+
+############################################
+# Process Media
+############################################
 
 def process_media(filepath):
     """
@@ -462,48 +559,35 @@ def process_media(filepath):
         # Initialize the queue for sliced chunks
         chunk_queue = queue.Queue()
 
-        # Updated worker with stop_event check
         def processing_worker():
             while True:
-                # If user requested exit, break out immediately
                 if stop_event.is_set():
                     break
-
                 chunk_data = chunk_queue.get()
                 if chunk_data is None or stop_event.is_set():
-                    break  # Stop signal or exit request
-
+                    break
                 chunk, start_time, end_time, sr = chunk_data
                 temp_chunk_path = os.path.join(output_dir, f"chunk_{start_time}_{end_time}.wav")
                 sf.write(temp_chunk_path, chunk, sr)
-
-                # Process the chunk (transcribe/translate/tts)
                 process_file(temp_chunk_path)
-
                 chunk_queue.task_done()
 
-        # Start the processing worker as a daemon thread
         threading.Thread(target=processing_worker, daemon=True).start()
 
-
-        # Read audio file and slice it dynamically
         waveform, sr = sf.read(temp_audio_path)
-
-        # Ensure mono audio
         if waveform.ndim > 1:
             waveform = waveform.mean(axis=1)
 
         slicer = Slicer(
             sr=sr,
-            threshold=-40.0,  # dB threshold for silence
-            min_length=3000,  # Minimum chunk length (ms)
-            min_interval=300,  # Minimum pause interval to trigger slicing (ms)
-            hop_size=20,       # Step size for RMS calculation (ms)
-            max_sil_kept=2000, # Max silence to keep (ms)
+            threshold=-40.0,
+            min_length=3000,  # ms
+            min_interval=300, # ms
+            hop_size=20,      # ms
+            max_sil_kept=2000 # ms
         )
         sliced_chunks = slicer.slice(waveform)
 
-        # Enqueue sliced chunks for processing
         for chunk_info in sliced_chunks:
             if isinstance(chunk_info, list) and len(chunk_info) == 3:
                 chunk, start_time, end_time = chunk_info
@@ -511,8 +595,7 @@ def process_media(filepath):
             else:
                 print("Skipping invalid sliced output:", chunk_info)
 
-        # Wait for processing to complete
-        chunk_queue.put(None)  # Send stop signal to the worker
+        chunk_queue.put(None)
         chunk_queue.join()
 
     except Exception as e:
@@ -543,15 +626,9 @@ def stop_threads():
     """
     Stop all threads and clean up before exiting.
     """
-    # Signal all workers to stop
     stop_event.set()
-
-    # Also stop audio playback worker
     playback_queue.put(None)
-
-    print("Exiting application.")  # No .join() calls to avoid blocking
-    # root.quit() is typically called by your Exit button
-
+    print("Exiting application.")
 
 def create_gui():
     root = tk.Tk()
@@ -573,11 +650,11 @@ def create_gui():
     autoplay_check.grid(row=2, column=0, columnspan=2, pady=5)
 
     exit_button = tk.Button(
-    frame,
-    text="Exit",
-    command=lambda: [stop_threads(), root.quit(), root.destroy()],
-    width=20
-)
+        frame,
+        text="Exit",
+        command=lambda: [stop_threads(), root.quit(), root.destroy()],
+        width=20
+    )
     exit_button.grid(row=3, column=0, columnspan=2, pady=10)
 
     root.mainloop()
