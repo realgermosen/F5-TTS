@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Real-Time Translator</title>
+  <style>
+    /* Reset & Base Styles */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f4f4f9;
+      color: #333;
+      padding: 20px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 20px auto;
+      background: #fff;
+      padding: 25px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #005a9c;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+      justify-content: center;
+    }
+    button, input[type="file"] {
+      flex: 1 1 150px;
+      padding: 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+    button {
+      background: #005a9c;
+      color: #fff;
+    }
+    button:hover:not(:disabled) {
+      background: #00477d;
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    input[type="file"] {
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    #status {
+      margin-bottom: 15px;
+      font-weight: bold;
+      text-align: center;
+    }
+    #info {
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 4px;
+      background: #fafafa;
+      max-height: 250px;
+      overflow-y: auto;
+      font-family: monospace;
+      white-space: pre-wrap;
+      margin-bottom: 15px;
+    }
+    footer {
+      text-align: center;
+      font-size: 14px;
+      color: #777;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Real-Time Translator</h1>
+    <div class="controls">
+      <button id="startBtn">Start Recording</button>
+      <button id="stopBtn" disabled>Stop Recording</button>
+      <input type="file" id="fileInput" accept="audio/*">
+      <button id="uploadBtn" disabled>Upload File</button>
+      <button id="pauseBtn" disabled>Pause</button>
+      <button id="skipBtn" disabled>Skip Chunk</button>
+      <button id="exitBtn">Exit</button>
+    </div>
+    <p id="status">Idle.</p>
+    <div id="info">Status and transcription info will appear here.</div>
+    <footer>Developed with passion — Real-Time Translator</footer>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      let audioContext;
+      let microphone;
+      let scriptNode;
+      let ws;
+      let recording = false;
+
+      const startBtn = document.getElementById("startBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const uploadBtn = document.getElementById("uploadBtn");
+      const pauseBtn = document.getElementById("pauseBtn");
+      const skipBtn = document.getElementById("skipBtn");
+      const fileInput = document.getElementById("fileInput");
+      const exitBtn = document.getElementById("exitBtn");
+      const statusEl = document.getElementById("status");
+      const infoEl = document.getElementById("info");
+
+      // Enable upload button when file is selected.
+      fileInput.addEventListener("change", () => {
+        uploadBtn.disabled = fileInput.files.length === 0;
+      });
+
+      // Helper: ensure WebSocket is open.
+      function ensureWebSocketOpen(callback) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          callback();
+        } else {
+          ws.addEventListener("open", function handler() {
+            ws.removeEventListener("open", handler);
+            callback();
+          });
+        }
+      }
+
+      // Connect to WebSocket.
+      function connectWebSocket() {
+        ws = new WebSocket("ws://127.0.0.1:9998");
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => {
+          statusEl.innerText = "WebSocket connected";
+          console.log("[CLIENT DEBUG] WebSocket connected.");
+        };
+        ws.onmessage = handleWSMessage;
+        ws.onclose = () => {
+          statusEl.innerText = "WebSocket closed";
+          console.log("[CLIENT DEBUG] WebSocket closed.");
+        };
+        ws.onerror = (e) => { console.error("[CLIENT DEBUG] WebSocket error:", e); };
+      }
+
+      // Playback queue and state.
+      let playbackQueue = [];
+      let isPlaying = false;
+      let currentSource = null;
+
+      function playNextChunk() {
+        if (playbackQueue.length === 0) {
+          isPlaying = false;
+          currentSource = null;
+          console.log("[CLIENT DEBUG] Playback queue empty.");
+          skipBtn.disabled = true;
+          return;
+        }
+        isPlaying = true;
+        skipBtn.disabled = false;
+        const chunk = playbackQueue.shift();
+        const buffer = audioContext.createBuffer(1, chunk.length, 24000);
+        buffer.copyToChannel(chunk, 0);
+        currentSource = audioContext.createBufferSource();
+        currentSource.buffer = buffer;
+        currentSource.connect(audioContext.destination);
+        currentSource.start();
+        currentSource.onended = () => {
+          currentSource = null;
+          playNextChunk();
+        };
+        console.log("[CLIENT DEBUG] Playing chunk of", chunk.length, "samples.");
+      }
+
+      // Pause button acts as a hard stop.
+      pauseBtn.addEventListener("click", () => {
+        console.log("[CLIENT DEBUG] Pause button pressed - hard stop.");
+        if (currentSource) {
+          currentSource.stop();
+          currentSource = null;
+        }
+        playbackQueue = [];
+        skipBtn.disabled = true;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ command: "pause" }));
+          console.log("[CLIENT DEBUG] Sent pause command to server.");
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.close();
+              console.log("[CLIENT DEBUG] WebSocket closed after pause.");
+            }
+          }, 500);
+        }
+        statusEl.innerText = "Paused.";
+      });
+
+      // Skip button: skip current chunk.
+      skipBtn.addEventListener("click", () => {
+        if (currentSource) {
+          currentSource.stop();
+          console.log("[CLIENT DEBUG] Skipped current chunk.");
+        }
+      });
+
+      // Append new info instead of overwriting.
+      function appendInfo(info) {
+        let content = "Transcription: " + info.transcription + "\n";
+        content += "Clipped: " + info.clipped + "\n";
+        content += "Translation: " + info.translation + "\n";
+        content += "-------------------------\n";
+        infoEl.innerText += content;
+      }
+
+      // WebSocket message handling.
+      let pendingHeader = null;
+      function handleWSMessage(event) {
+        if (typeof event.data === "string") {
+          if (event.data === "END_OF_AUDIO") {
+            statusEl.innerText = "Audio stream ended.";
+            console.log("[CLIENT DEBUG] Received END_OF_AUDIO.");
+            setTimeout(() => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                console.log("[CLIENT DEBUG] WebSocket closed after final audio.");
+              }
+            }, 1000);
+          } else {
+            try {
+              pendingHeader = JSON.parse(event.data);
+              console.log("[CLIENT DEBUG] Received header:", pendingHeader);
+              if (pendingHeader.transcription) {
+                appendInfo(pendingHeader);
+              }
+            } catch (e) {
+              console.error("[CLIENT DEBUG] Failed to parse header:", e);
+            }
+          }
+        } else if (event.data instanceof ArrayBuffer) {
+          if (pendingHeader) {
+            const header = pendingHeader;
+            pendingHeader = null;
+            const floatData = new Float32Array(event.data);
+            console.log("[CLIENT DEBUG] Received", floatData.length, "samples for type", header.type);
+            if (header.type === "chunk") {
+              playbackQueue.push(floatData);
+              if (!isPlaying) playNextChunk();
+            } else if (header.type === "final") {
+              const blob = new Blob([event.data], { type: "application/octet-stream" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "final_crossfade.wav";
+              a.click();
+              console.log("[CLIENT DEBUG] Final crossfade downloaded:", floatData.length, "samples.");
+            }
+          }
+        }
+      }
+
+      // Live recording: create AudioContext with sampleRate 24000.
+      async function startRecording() {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+          console.log("[CLIENT DEBUG] AudioContext created with sampleRate:", audioContext.sampleRate);
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        microphone = audioContext.createMediaStreamSource(stream);
+        scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+        scriptNode.onaudioprocess = function(e) {
+          if (!recording) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(inputData.buffer);
+          }
+        };
+        microphone.connect(scriptNode);
+        scriptNode.connect(audioContext.destination);
+        recording = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        pauseBtn.disabled = false;
+        statusEl.innerText = "Recording...";
+        console.log("[CLIENT DEBUG] Recording started.");
+      }
+
+      // Stop recording: send stop command and wait for final processing.
+      function stopRecording() {
+        recording = false;
+        if (scriptNode) scriptNode.disconnect();
+        if (microphone) microphone.disconnect();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ command: "stop" }));
+          console.log("[CLIENT DEBUG] Sent stop command; waiting for final audio.");
+        }
+        stopBtn.disabled = true;
+        startBtn.disabled = false;
+        statusEl.innerText = "Stopped recording, processing remaining audio...";
+      }
+
+      // File upload: send "upload" command, file chunks, then "upload_end".
+      function uploadFile() {
+        const file = fileInput.files[0];
+        if (!file) {
+          alert("Please select a file first.");
+          return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          connectWebSocket();
+        }
+        ensureWebSocketOpen(() => {
+          ws.send(JSON.stringify({ command: "upload" }));
+          if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+            console.log("[CLIENT DEBUG] AudioContext created with sampleRate:", audioContext.sampleRate);
+          }
+          const chunkSize = 4096 * 4;
+          let offset = 0;
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            const arrayBuffer = e.target.result;
+            ws.send(arrayBuffer);
+            offset += chunkSize;
+            console.log("[CLIENT DEBUG] Sent file chunk; offset now:", offset);
+            if (offset < file.size) {
+              readSlice();
+            } else {
+              ws.send(JSON.stringify({ command: "upload_end" }));
+              statusEl.innerText = "File upload complete.";
+              console.log("[CLIENT DEBUG] File upload complete.");
+            }
+          };
+          function readSlice() {
+            const slice = file.slice(offset, offset + chunkSize);
+            reader.readAsArrayBuffer(slice);
+          }
+          readSlice();
+        });
+      }
+
+      function exitApp() {
+        stopRecording();
+        setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+            console.log("[CLIENT DEBUG] WebSocket closed on exit.");
+          }
+        }, 1000);
+        if (audioContext) audioContext.close();
+        statusEl.innerText = "Exited.";
+        console.log("[CLIENT DEBUG] Exited application.");
+      }
+
+      startBtn.addEventListener("click", () => {
+        connectWebSocket();
+        startRecording();
+      });
+      stopBtn.addEventListener("click", stopRecording);
+      uploadBtn.addEventListener("click", uploadFile);
+      pauseBtn.addEventListener("click", () => {
+        console.log("[CLIENT DEBUG] Pause button pressed - hard stop.");
+        if (currentSource) {
+          currentSource.stop();
+          currentSource = null;
+        }
+        playbackQueue = [];
+        skipBtn.disabled = true;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ command: "pause" }));
+          console.log("[CLIENT DEBUG] Sent pause command to server.");
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.close();
+              console.log("[CLIENT DEBUG] WebSocket closed after pause.");
+            }
+          }, 500);
+        }
+        statusEl.innerText = "Paused.";
+      });
+      skipBtn.addEventListener("click", () => {
+        if (currentSource) {
+          currentSource.stop();
+          console.log("[CLIENT DEBUG] Skipped current chunk.");
+        }
+      });
+      exitBtn.addEventListener("click", exitApp);
+    });
+  </script>
+</body>
+</html>

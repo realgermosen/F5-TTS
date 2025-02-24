@@ -46,7 +46,7 @@ translation_model = AutoModelForSeq2SeqLM.from_pretrained(model_name, token=True
 
 # F5-TTS
 tts_model_choice = "F5-TTS"
-# project = "entazero_v2"
+# project = "pentazero_v2"
 project = "f5-tts_spanish"  # "f5-tts_spanish"
 ckpt_path = f"F5-TTS/ckpts/{project}/model_last.pt"
 remove_silence = False
