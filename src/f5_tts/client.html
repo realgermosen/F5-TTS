@@ -139,7 +139,7 @@
 
       // Connect to WebSocket.
       function connectWebSocket() {
-        ws = new WebSocket("ws://127.0.0.1:9998");
+        ws = new WebSocket("ws://192.168.0.19:9998");
         ws.binaryType = "arraybuffer";
         ws.onopen = () => {
           statusEl.innerText = "WebSocket connected";
