@@ -1,7 +1,6 @@
 FROM pytorch/pytorch:2.4.0-cuda12.4-cudnn9-devel
 
 USER root
-
 ARG DEBIAN_FRONTEND=noninteractive
 
 LABEL github_repo="https://github.com/realgermosen/F5-TTS"
@@ -16,13 +15,15 @@ RUN set -x \
 
 WORKDIR /workspace
 
-# Clone your fork of F5-TTS.
-RUN git clone https://github.com/realgermosen/F5-TTS.git \
-    && cd F5-TTS \
-    && git submodule update --init --recursive \
-    && pip install -e . --no-cache-dir
+# Copy your entire local project into the container.
+COPY . /workspace/F5-TTS
+
+WORKDIR /workspace/F5-TTS
+
+# Install the project in editable mode.
+RUN pip install -e . --no-cache-dir
 
 ENV SHELL=/bin/bash
 
-WORKDIR /workspace/F5-TTS
+# Launch your server.
 CMD ["python", "src/f5_tts/server.py"]
