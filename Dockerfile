@@ -24,3 +24,5 @@ RUN git clone https://github.com/SWivid/F5-TTS.git \
 ENV SHELL=/bin/bash
 
 WORKDIR /workspace/F5-TTS
+CMD ["python", "src/f5_tts/server.py"]
+

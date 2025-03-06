@@ -24,9 +24,9 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="transformers.m
 # All processing is now at 24000 Hz.
 SAMPLE_RATE = 24000
 
-output_dir = "F5-TTS/data/recordings"
-processed_dir = "F5-TTS/data/processed"
-generated_dir = "F5-TTS/data/generated"
+output_dir = "data/recordings"
+processed_dir = "data/processed"
+generated_dir = "data/generated"
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(processed_dir, exist_ok=True)
 os.makedirs(generated_dir, exist_ok=True)
@@ -50,13 +50,13 @@ print("[SERVER DEBUG] Translation model loaded.")
 # F5-TTS configuration
 tts_model_choice = "F5-TTS"
 project = "f5-tts_spanish"
-ckpt_path = f"F5-TTS/ckpts/{project}/model_last.pt"
+ckpt_path = f"ckpts/{project}/model_last.pt"
 remove_silence = False
 cross_fade_duration = 0.15  # seconds
 speed = 1.0
 print("[SERVER DEBUG] Loading vocoder and TTS model...")
 vocoder = load_vocoder()
-vocab_file = os.path.join("F5-TTS/data", f"{project}_char/vocab.txt")
+vocab_file = os.path.join("data", f"{project}_char/vocab.txt")
 tts_api = F5TTS(
     model_type=tts_model_choice,
     ckpt_file=ckpt_path,
@@ -354,7 +354,7 @@ async def process_uploaded_file(websocket, file_bytes: bytes):
 client_buffers = {}  # websocket -> (np.array, last time, mode, waiting_flag)
 file_buffers = {}    # websocket -> bytes
 
-async def process_client(websocket, path):
+async def process_client(websocket, path=9998):
     global client_buffers, final_wave_data, file_buffers
     print("[SERVER DEBUG] Client connected")
     client_buffers[websocket] = (np.empty((0,), dtype=np.float32), time.time(), "live", False)
@@ -461,5 +461,8 @@ async def main():
         print("[SERVER DEBUG] WebSocket server listening on 0.0.0.0:9998")
         await asyncio.Future()  # run forever
 
+def run_server():
+    asyncio.run(main())  # Ensure the coroutine runs properly
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_server()
