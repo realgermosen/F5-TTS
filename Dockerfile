@@ -16,7 +16,7 @@ RUN set -x \
 
 WORKDIR /workspace
 
-# Clone your fork instead of the original repository.
+# Clone your fork of F5-TTS.
 RUN git clone https://github.com/realgermosen/F5-TTS.git \
     && cd F5-TTS \
     && git submodule update --init --recursive \
