@@ -50,7 +50,7 @@ print("[SERVER DEBUG] Translation model loaded.")
 # F5-TTS configuration
 tts_model_choice = "F5-TTS"
 project = "f5-tts_spanish"
-ckpt_path = f"ckpts/{project}/model_last.pt"
+ckpt_path = f"ckpts/{project}/model_1200000.safetensors"
 remove_silence = False
 cross_fade_duration = 0.15  # seconds
 speed = 1.0
